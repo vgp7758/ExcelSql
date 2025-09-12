@@ -49,21 +49,30 @@ class NonStandardRequestMiddleware(Middleware):
         logger.info(f"处理请求: {context.method}")
         
         # 检查是否是工具调用请求
-        if context.method == "tools/call" and hasattr(context, 'message') and hasattr(context.message, 'params'):
-            logger.info(f"原始参数: {context.message.params}")
+        if context.method == "tools/call":
+            # 尝试从不同的位置获取参数
+            params = None
+            if hasattr(context, 'params') and context.params:
+                params = context.params
+            elif hasattr(context, 'message') and hasattr(context.message, 'params'):
+                params = context.message.params
+            elif hasattr(context, 'data') and context.data:
+                params = context.data.get('params', {})
             
-            # 智能解析工具调用参数
-            parsed_params = smart_parse_tool_call_params(context.message.params)
-            logger.info(f"解析后参数: {parsed_params}")
-            
-            # 直接修改context.message.params
-            context.message.params = parsed_params
-            
-            # 同时确保name和arguments字段存在
-            if "name" not in context.message.params:
-                context.message.params["name"] = ""
-            if "arguments" not in context.message.params:
-                context.message.params["arguments"] = {}
+            if params:
+                logger.info(f"原始参数: {params}")
+                
+                # 智能解析工具调用参数
+                parsed_params = smart_parse_tool_call_params(params)
+                logger.info(f"解析后参数: {parsed_params}")
+                
+                # 更新参数到正确的位置
+                if hasattr(context, 'params'):
+                    context.params = parsed_params
+                elif hasattr(context, 'message') and hasattr(context.message, 'params'):
+                    context.message.params = parsed_params
+                elif hasattr(context, 'data'):
+                    context.data['params'] = parsed_params
         
         return await call_next(context)
 
@@ -77,6 +86,8 @@ def smart_parse_arguments(args: Dict[str, Any]) -> Dict[str, Any]:
     Returns:
         解析后的参数字典
     """
+    logger.info(f"解析工具参数: {args}")
+    
     # 如果参数为空，直接返回
     if not args:
         return args
@@ -94,9 +105,57 @@ def smart_parse_arguments(args: Dict[str, Any]) -> Dict[str, Any]:
         if isinstance(args[key], dict) and key in wrapper_keys:
             logger.info(f"检测到参数被包装在'{key}'中，自动解包...")
             return args[key]
+    
+    # 情况3: 参数中可能包含IDE包装的值（如server_name, tool_name）
+    # 过滤掉已知的包装字段，只保留实际的参数
+    filtered_args = {}
+    wrapper_fields = ["server_name", "tool_name", "args", "parameters", "params", "arguments"]
+    
+    for key, value in args.items():
+        if key not in wrapper_fields:
+            filtered_args[key] = value
+        elif key == "args" and isinstance(value, dict):
+            # 如果是args字段，递归处理
+            filtered_args.update(smart_parse_arguments(value))
+    
+    if filtered_args:
+        logger.info(f"过滤包装字段后的参数: {filtered_args}")
+        return filtered_args
             
-    # 情况3: 参数是正确的格式，直接返回
+    # 情况4: 参数是正确的格式，直接返回
     return args
+
+def ide_tool_wrapper(func):
+    """
+    装饰器：包装工具函数以处理IDE的参数格式
+    """
+    import functools
+    
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        logger.info(f"包装器调用: {func.__name__}, 参数: args={args}, kwargs={kwargs}")
+        
+        # 如果第一个参数是字典且包含IDE包装字段，则进行解析
+        if args and isinstance(args[0], dict):
+            # 检查是否包含IDE包装格式
+            first_arg = args[0]
+            if any(key in first_arg for key in ["server_name", "tool_name", "args"]):
+                logger.info(f"检测到IDE包装参数，正在解析...")
+                
+                # 如果是IDE格式，提取args中的参数
+                if "args" in first_arg and isinstance(first_arg["args"], dict):
+                    parsed_kwargs = smart_parse_arguments(first_arg["args"])
+                else:
+                    # 如果args不存在，则过滤掉包装字段
+                    parsed_kwargs = smart_parse_arguments(first_arg)
+                
+                logger.info(f"解析后的参数: {parsed_kwargs}")
+                return func(**parsed_kwargs)
+        
+        # 如果没有检测到IDE格式，正常调用
+        return func(*args, **kwargs)
+    
+    return wrapper
 
 def smart_parse_tool_call_params(params: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -130,12 +189,39 @@ def smart_parse_tool_call_params(params: Dict[str, Any]) -> Dict[str, Any]:
         logger.info(f"转换结果: {result}")
         return result
         
-    # 检查是否是另一种非标准格式: {server_name: "...", tool_name: "...", args: {...}}
-    if "server_name" in params and "tool_name" in params and "args" in params:
-        logger.info("检测到另一种非标准工具调用格式，自动转换为标准格式...")
+    # 检查是否是IDE包装格式: {server_name: "...", tool_name: "...", args: {...}}
+    if "server_name" in params and "tool_name" in params:
+        logger.info("检测到IDE包装格式，自动转换为标准格式...")
+        # 提取工具名和参数
+        tool_name = params["tool_name"]
+        arguments = params.get("args", {})
+        
+        # 确保arguments是字典类型
+        if not isinstance(arguments, dict):
+            arguments = {}
+        
         result = {
-            "name": params["tool_name"],
-            "arguments": params["args"] if isinstance(params["args"], dict) else {}
+            "name": tool_name,
+            "arguments": arguments
+        }
+        logger.info(f"转换结果: {result}")
+        return result
+        
+    # 检查是否是另一种包装格式：只有server_name和tool_name，参数在顶层
+    if "server_name" in params and "tool_name" in params and "arguments" not in params:
+        logger.info("检测到IDE包装格式（参数在顶层），自动转换为标准格式...")
+        # 提取工具名，并将其他字段作为参数
+        tool_name = params["tool_name"]
+        arguments = {}
+        
+        # 移除已知的包装字段，其余的作为参数
+        for key, value in params.items():
+            if key not in ["server_name", "tool_name"]:
+                arguments[key] = value
+        
+        result = {
+            "name": tool_name,
+            "arguments": arguments
         }
         logger.info(f"转换结果: {result}")
         return result
@@ -144,37 +230,40 @@ def smart_parse_tool_call_params(params: Dict[str, Any]) -> Dict[str, Any]:
     logger.warning(f"无法识别工具调用参数格式，将整个参数作为arguments: {params}")
     return {"name": "", "arguments": params}
 
+@ide_tool_wrapper
 @mcp.tool
 def set_excel_directory(directory: str = None) -> str:  # pyright: ignore[reportArgumentType]
     """设置Excel工作目录，请求参数不需要包装成包含server_name和tool_name的结构，而是直接传递啊Args
     """
     global default_excel_directory
     try:
-        # 智能解析参数
-        parsed_args = smart_parse_arguments({"directory": directory} if directory is not None else {})
-        actual_directory = parsed_args.get("directory", directory)
+        logger.info(f"set_excel_directory 收到参数: directory={directory}")
         
         # 如果没有提供目录参数，返回当前目录
-        if actual_directory is None:
+        if directory is None:
             return f"当前Excel工作目录: {default_excel_directory}"
         
         # 验证目录是否存在
-        dir_path = Path(actual_directory)
+        dir_path = Path(directory)
         if not dir_path.exists():
-            return f"错误: 目录 '{actual_directory}' 不存在"
+            return f"错误: 目录 '{directory}' 不存在"
         if not dir_path.is_dir():
-            return f"错误: '{actual_directory}' 不是一个有效的目录"
+            return f"错误: '{directory}' 不是一个有效的目录"
         
-        default_excel_directory = actual_directory
-        return f"Excel工作目录已设置为: {actual_directory}"
+        default_excel_directory = directory
+        logger.info(f"Excel工作目录已设置为: {directory}")
+        return f"Excel工作目录已设置为: {directory}"
     except Exception as e:
+        logger.error(f"set_excel_directory 错误: {str(e)}")
         return f"设置Excel工作目录失败: {str(e)}"
 
+@ide_tool_wrapper
 @mcp.tool
 def get_excel_directory() -> str:
     """获取当前Excel工作目录"""
     return default_excel_directory
 
+@ide_tool_wrapper
 @mcp.tool
 def excel_show_tables(directory: str = None) -> str:
     """显示Excel中所有可用的表名（这些名称在SQL查询中用作表名），请求参数不需要包装成包含server_name和tool_name的结构，而是直接传递啊Args
@@ -183,24 +272,22 @@ def excel_show_tables(directory: str = None) -> str:
         directory: Excel工作目录，默认为当前目录
     """
     try:
-        # 检查是否是非标准参数格式
-        if isinstance(directory, dict) and "args" in directory:
-            # 非标准格式: {args: {directory: "..."}}
-            actual_directory = directory.get("args", {}).get("directory", default_excel_directory)
-        elif isinstance(directory, dict) and "directory" in directory:
-            # 另一种非标准格式: {directory: "..."}
-            actual_directory = directory.get("directory", default_excel_directory)
-        else:
-            # 标准格式
-            actual_directory = directory if directory is not None else default_excel_directory
+        logger.info(f"excel_show_tables 收到参数: {directory}")
+        
+        # 如果没有提供目录参数，使用默认目录
+        actual_directory = directory if directory is not None else default_excel_directory
+        
+        logger.info(f"使用目录: {actual_directory}")
         
         # 使用线程池执行器运行异步代码
         with concurrent.futures.ThreadPoolExecutor() as executor:
             future = executor.submit(_execute_sql_sync, "SHOW TABLES", actual_directory)
             return future.result()
     except Exception as e:
+        logger.error(f"excel_show_tables 错误: {str(e)}")
         return f"错误: {str(e)}"
 
+@ide_tool_wrapper
 @mcp.tool
 def excel_query(sql: str = None, directory: str = None) -> str:  # pyright: ignore[reportArgumentType]
     """执行SQL查询Excel数据，表名应为工作表名称而非文件名，请求参数不需要包装成包含server_name和tool_name的结构，而是直接传递啊Args
@@ -210,34 +297,24 @@ def excel_query(sql: str = None, directory: str = None) -> str:  # pyright: igno
         directory: Excel文件所在的目录路径（可选，默认使用已设置的目录）
     """
     try:
-        # 检查是否是非标准参数格式
-        actual_sql = sql
+        logger.info(f"excel_query 收到参数: sql={sql}, directory={directory}")
+        
         actual_directory = directory if directory is not None else default_excel_directory
         
-        # 处理sql参数的非标准格式
-        if isinstance(sql, dict) and "args" in sql:
-            actual_sql = sql.get("args", {}).get("sql")
-            actual_directory = sql.get("args", {}).get("directory", actual_directory)
-        elif isinstance(sql, dict) and "sql" in sql:
-            actual_sql = sql.get("sql")
-            actual_directory = sql.get("directory", actual_directory)
-            
-        # 处理directory参数的非标准格式
-        if isinstance(directory, dict) and "args" in directory:
-            actual_directory = directory.get("args", {}).get("directory", actual_directory)
-        elif isinstance(directory, dict) and "directory" in directory:
-            actual_directory = directory.get("directory", actual_directory)
-        
-        if actual_sql is None:
+        if sql is None:
             return "错误: SQL查询语句不能为空"
             
+        logger.info(f"执行查询: SQL={sql}, 目录={actual_directory}")
+        
         # 使用线程池执行器运行异步代码
         with concurrent.futures.ThreadPoolExecutor() as executor:
-            future = executor.submit(_execute_sql_sync, actual_sql, actual_directory)
+            future = executor.submit(_execute_sql_sync, sql, actual_directory)
             return future.result()
     except Exception as e:
+        logger.error(f"excel_query 错误: {str(e)}")
         return f"错误: {str(e)}"
 
+@ide_tool_wrapper
 @mcp.tool
 def excel_get_table_schema(sheet_name: str = None, directory: str = None) -> str:
     """获取指定表的结构定义，表名应为工作表名称而非文件名，请求参数不需要包装成包含server_name和tool_name的结构，而是直接传递啊Args
@@ -247,34 +324,24 @@ def excel_get_table_schema(sheet_name: str = None, directory: str = None) -> str
         directory: Excel文件所在的目录路径（可选，默认使用已设置的目录）
     """
     try:
-        # 检查是否是非标准参数格式
-        actual_table_name = sheet_name
+        logger.info(f"excel_get_table_schema 收到参数: sheet_name={sheet_name}, directory={directory}")
+        
         actual_directory = directory if directory is not None else default_excel_directory
         
-        # 处理table_name参数的非标准格式
-        if isinstance(sheet_name, dict) and "args" in sheet_name:
-            actual_table_name = sheet_name.get("args", {}).get("table_name")
-            actual_directory = sheet_name.get("args", {}).get("directory", actual_directory)
-        elif isinstance(sheet_name, dict) and "table_name" in sheet_name:
-            actual_table_name = sheet_name.get("table_name")
-            actual_directory = sheet_name.get("directory", actual_directory)
-            
-        # 处理directory参数的非标准格式
-        if isinstance(directory, dict) and "args" in directory:
-            actual_directory = directory.get("args", {}).get("directory", actual_directory)
-        elif isinstance(directory, dict) and "directory" in directory:
-            actual_directory = directory.get("directory", actual_directory)
-        
-        if actual_table_name is None:
+        if sheet_name is None:
             return "错误: 表名不能为空"
             
+        logger.info(f"获取表结构: 表名={sheet_name}, 目录={actual_directory}")
+        
         # 使用线程池执行器运行异步代码
         with concurrent.futures.ThreadPoolExecutor() as executor:
-            future = executor.submit(_get_create_table_sync, actual_table_name, actual_directory)
+            future = executor.submit(_get_create_table_sync, sheet_name, actual_directory)
             return future.result()
     except Exception as e:
+        logger.error(f"excel_get_table_schema 错误: {str(e)}")
         return f"错误: {str(e)}"
 
+@ide_tool_wrapper
 @mcp.tool
 def excel_refresh_cache(directory: str = None) -> str:
     """刷新Excel文件缓存，重新加载所有文件，请求参数不需要包装成包含server_name和tool_name的结构，而是直接传递啊Args
@@ -283,18 +350,21 @@ def excel_refresh_cache(directory: str = None) -> str:
         directory: Excel文件所在的目录路径（可选，默认使用已设置的目录）
     """
     try:
-        # 智能解析参数
-        parsed_args = smart_parse_arguments({"directory": directory} if directory is not None else {})
-        actual_directory = parsed_args.get("directory", directory)
+        logger.info(f"excel_refresh_cache 收到参数: directory={directory}")
         
-        excel_dir = actual_directory if actual_directory is not None else default_excel_directory
+        excel_dir = directory if directory is not None else default_excel_directory
+        
+        logger.info(f"刷新缓存目录: {excel_dir}")
+        
         # 使用线程池执行器运行异步代码
         with concurrent.futures.ThreadPoolExecutor() as executor:
             future = executor.submit(_refresh_cache_sync, excel_dir)
             return future.result()
     except Exception as e:
+        logger.error(f"excel_refresh_cache 错误: {str(e)}")
         return f"错误: {str(e)}"
 
+@ide_tool_wrapper
 @mcp.tool
 def excel_list_sheets(directory: str = None) -> str:
     """列出所有Excel工作表，请求参数不需要包装成包含server_name和tool_name的结构，而是直接传递啊Args
@@ -303,16 +373,18 @@ def excel_list_sheets(directory: str = None) -> str:
         directory: Excel文件所在的目录路径（可选，默认使用已设置的目录）
     """
     try:
-        # 智能解析参数
-        parsed_args = smart_parse_arguments({"directory": directory} if directory is not None else {})
-        actual_directory = parsed_args.get("directory", directory)
+        logger.info(f"excel_list_sheets 收到参数: directory={directory}")
         
-        excel_dir = actual_directory if actual_directory is not None else default_excel_directory
+        excel_dir = directory if directory is not None else default_excel_directory
+        
+        logger.info(f"列出工作表目录: {excel_dir}")
+        
         # 使用线程池执行器运行异步代码
         with concurrent.futures.ThreadPoolExecutor() as executor:
             future = executor.submit(_get_tables_sync, excel_dir)
             return future.result()
     except Exception as e:
+        logger.error(f"excel_list_sheets 错误: {str(e)}")
         return f"错误: {str(e)}"
 
 def _execute_sql_sync(sql: str, directory: str) -> str:
