@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "excel-sql-tool": {
+      "command": "python",
+      "args": ["fastmcp_server.py", "./XLSX"]
+    }
+  }
+}

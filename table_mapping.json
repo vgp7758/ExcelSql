@@ -1,0 +1,8 @@
+{
+  "tableMappings": {
+    "Actions": "ActionType",
+    "Configuration": "Config",
+    "PreloadData": "Preload"
+  },
+  "directory": "./XLSX"
+}
