@@ -2,6 +2,8 @@
 
 Excel SQL Tool是一个允许使用SQL语法查询Excel文件的工具。它将Excel文件作为数据库使用，使开发者能够像操作数据库一样对Excel文件进行结构化查询。
 
+**最新更新**: 已修复MCP响应格式和SQL WHERE条件问题，现在完全支持复杂的SQL查询操作。
+
 ## 核心概念
 
 ### FileName vs SheetName
@@ -22,11 +24,13 @@ ExcelDB/
 │   ├── ExcelManager.cs     # Excel文件管理
 │   ├── SqlParser.cs        # SQL解析器
 │   ├── McpHandler.cs       # MCP协议处理
+│   ├── McpServer.cs        # 原生MCP服务器实现
 │   ├── Models.cs           # 数据模型
 │   └── Program.cs          # 程序入口
 ├── XLSX/                   # Excel文件目录
 ├── mcp_server.py           # Python MCP服务器
 ├── fastmcp_server.py       # FastMCP服务器实现
+├── test_*.py              # 测试脚本
 ├── run.bat                 # 启动脚本
 └── test_excel_sql.ps1      # 测试脚本
 ```
@@ -51,15 +55,26 @@ msbuild ExcelSqlTool/ExcelSqlTool.csproj
 
 ### 3. 启动MCP服务器
 
-ExcelDB支持两种MCP服务器实现：
+ExcelDB支持三种MCP服务器实现：
 
-#### 方案1: 使用标准MCP服务器
+#### 方案1: 使用原生C# MCP服务器（最新推荐）
+
+```bash
+# Windows
+cd ExcelSqlTool
+./bin/Debug/net48/ExcelSqlTool.exe ../XLSX --mcp
+
+# 或使用批处理脚本
+./run_mcp_server.bat
+```
+
+#### 方案2: 使用Python MCP服务器
 
 ```bash
 python mcp_server.py ./XLSX
 ```
 
-#### 方案2: 使用FastMCP服务器（推荐）
+#### 方案3: 使用FastMCP服务器
 
 ```bash
 python fastmcp_server.py ./XLSX
@@ -91,8 +106,17 @@ SHOW CREATE TABLE Config
 ## 支持的SQL语句
 
 - `SELECT * FROM Sheet1` - 查询工作表数据
+- `SELECT column1, column2 FROM Sheet1 WHERE condition` - 条件查询
+- `SELECT * FROM Sheet1 LIMIT 10` - 限制结果数量
 - `SHOW TABLES` - 显示所有工作表
 - `SHOW CREATE TABLE Sheet1` - 显示工作表结构
+
+**最新支持的特性**:
+- ✅ WHERE条件语句（如：`WHERE Category = 3`）
+- ✅ 复杂列名支持（如：`SELECT \`DataMap[Enums.ELanguage.Chinese]\` FROM Language`）
+- ✅ LIMIT子句
+- ✅ 反引号引用的列名
+- ✅ 正确的布尔表达式求值
 
 ## MCP服务器使用
 
@@ -253,3 +277,19 @@ ExcelDB的MCP服务器实现了智能参数解析功能，能够自动处理IDE 
 - 增加数据写入功能
 - 支持更多Excel格式
 - 添加数据验证功能
+
+## 更新日志
+
+### v1.1.0 (最新版本)
+- **修复**: MCP响应格式双重序列化问题
+- **修复**: SQL WHERE条件操作符转换（= 到 ==）
+- **新增**: 支持反引号引用的复杂列名
+- **新增**: 原生C# MCP服务器实现（McpServer.cs）
+- **改进**: 表名大小写敏感处理
+- **新增**: 完整的测试套件和文档
+- **修复**: MCP协议参数解析问题
+
+### v1.0.0
+- 初始版本发布
+- 基本的SQL查询功能
+- Python MCP服务器实现

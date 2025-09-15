@@ -2,6 +2,8 @@
 
 Excel SQL工具是一个允许通过SQL语句操作Excel文件的命令行工具。它将Excel文件视为数据库表，支持常见的SQL操作。
 
+**最新更新**: v1.1.0 - 已修复MCP响应格式和SQL WHERE条件问题，现在完全支持复杂的SQL查询操作。
+
 ## 功能特性
 
 - 通过SQL语句操作Excel文件
@@ -170,10 +172,13 @@ ExcelSqlTool.exe ./XLSX
 ExcelSqlTool/
 ├── ExcelManager.cs       # Excel文件操作管理器
 ├── McpHandler.cs         # MCP协议处理器
+├── McpServer.cs          # 原生MCP服务器实现
 ├── Models.cs             # 数据模型定义
 ├── Program.cs            # 程序入口
 ├── SqlParser.cs          # SQL解析器
 ├── ExcelSqlTool.csproj   # 项目文件
+├── run_mcp_server.bat    # MCP服务器启动脚本
+├── MCP_SERVER_README.md  # MCP服务器详细文档
 └── README.md             # 说明文档
 ```
 
@@ -191,4 +196,15 @@ ExcelSqlTool/
 1. 工具只读取.xlsx格式的Excel文件
 2. 表名使用工作表名称，不使用文件名
 3. 工具会自动推断列的数据类型
-4. WHERE条件只支持简单的等于比较
+4. WHERE条件现在支持完整的比较操作（=, >, <, >=, <=, !=）
+5. 支持复杂的列名，包括包含特殊字符的列名（使用反引号引用）
+
+## 版本更新
+
+### v1.1.0 最新改进
+- **修复**: MCP响应双重序列化问题，现在正确返回SQL查询结果
+- **修复**: SQL WHERE条件操作符转换，支持完整的比较操作
+- **新增**: 原生C# MCP服务器实现，性能更优
+- **新增**: 反引号列名支持，可处理复杂列名
+- **改进**: 表名大小写敏感处理，保留原始大小写
+- **新增**: 完整的测试套件和详细文档
