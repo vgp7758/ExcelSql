@@ -170,7 +170,7 @@ class ExcelSqlMcpServer:
         logger.info(f"返回 {len(tools)} 个工具")
         return tools
     
-    async def call_tool(self, name: str, arguments: Dict[str, Any]) -> CallToolResult:
+    async def call_tool(self, name: str, arguments: Dict[str, Any]):
         """调用指定的工具"""
         logger.info(f"调用工具: {name}，原始参数: {arguments}")
         try:
@@ -179,24 +179,24 @@ class ExcelSqlMcpServer:
             logger.info(f"解析后参数: {parsed_arguments}")
             
             if name == "excel_show_tables":
-                return await self._get_tables(parsed_arguments.get("directory"))
+                result = await self._get_tables(parsed_arguments.get("directory"))
             elif name == "excel_query":
                 sql = parsed_arguments.get("sql")
                 if not sql:
                     raise ValueError("SQL查询语句不能为空")
-                return await self._execute_sql(sql, parsed_arguments.get("directory"))
+                result = await self._execute_sql(sql, parsed_arguments.get("directory"))
             elif name == "excel_get_table_schema":
                 table_name = parsed_arguments.get("table_name")
                 if not table_name:
                     raise ValueError("表名不能为空")
-                return await self._get_create_table(table_name, parsed_arguments.get("directory"))
+                result = await self._get_create_table(table_name, parsed_arguments.get("directory"))
             elif name == "excel_refresh_cache":
-                return await self._refresh_cache(parsed_arguments.get("directory"))
+                result = await self._refresh_cache(parsed_arguments.get("directory"))
             elif name == "excel_list_sheets":
-                return await self._get_tables(parsed_arguments.get("directory"))
+                result = await self._get_tables(parsed_arguments.get("directory"))
             else:
                 raise ValueError(f"未知工具: {name}")
-                
+            return [TextContent(type=text,text=result)]
         except Exception as e:
             logger.error(f"工具调用失败: {e}")
             return CallToolResult(

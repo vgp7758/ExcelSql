@@ -35,12 +35,6 @@ except ImportError as e:
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# 创建 MCP Server
-mcp = FastMCP("excel-sql-tool")
-
-# 默认Excel目录
-default_excel_directory = "./XLSX"
-
 class NonStandardRequestMiddleware(Middleware):
     """处理非标准请求格式的中间件"""
     
@@ -75,6 +69,15 @@ class NonStandardRequestMiddleware(Middleware):
                     context.data['params'] = parsed_params
         
         return await call_next(context)
+
+
+# 创建 MCP Server
+mcp = FastMCP("excel-sql-tool")
+mcp.add_middleware(NonStandardRequestMiddleware())
+
+# 默认Excel目录
+default_excel_directory = "./XLSX"
+
 
 def smart_parse_arguments(args: Dict[str, Any]) -> Dict[str, Any]:
     """
