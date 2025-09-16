@@ -41,36 +41,16 @@ namespace ExcelSqlTool
                 for (int i = 0; i < args.Length; i++)
                 {
                     var lowerArg = args[i].ToLower();
-                    if (lowerArg == "--mcp" || lowerArg == "-mcp")
+                    if (lowerArg == "--mcp" || lowerArg == "-mcp"|| lowerArg == "mcp")
                     {
                         isMcpMode = true;
                         continue;
                     }
-                    if (lowerArg.StartsWith("-dir=") || lowerArg.StartsWith("--dir="))
+                    if (lowerArg.StartsWith("-dir=") || lowerArg.StartsWith("--dir=")|| lowerArg.StartsWith("dir="))
                     {
                         directoryPath = args[i].Substring(lowerArg.IndexOf('=') + 1).Trim('"');
                         continue;
                     }
-                }
-
-                if (string.IsNullOrEmpty(directoryPath))
-                {
-                    Console.WriteLine("错误: 请指定目录路径");
-                    return;
-                }
-
-                // 检查目录是否存在
-                if (!Directory.Exists(directoryPath))
-                {
-                    var dirp = System.IO.Directory.GetCurrentDirectory();
-                    // 尝试转换为绝对路径
-                    directoryPath = Path.Combine(dirp, directoryPath);
-
-                    //if (!Directory.Exists(directoryPath))
-                    //{
-                    //    Console.WriteLine($"错误: 目录 {directoryPath} 不存在");
-                    //    return;
-                    //}
                 }
 
                 // 初始化Excel管理器

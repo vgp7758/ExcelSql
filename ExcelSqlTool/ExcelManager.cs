@@ -26,6 +26,10 @@ namespace ExcelSqlTool
 
             _directoryPath = directoryPath;
             _excelFiles = new Dictionary<string, ExcelFile>();
+            if(string.IsNullOrEmpty(_directoryPath))
+            {
+                return;
+            }
             LoadAllExcelFiles();
 
             if (!IsMcpMode())
@@ -42,13 +46,16 @@ namespace ExcelSqlTool
         {
             // 检查环境变量或命令行参数来判断是否为MCP模式
             return Environment.GetCommandLineArgs().Contains("--mcp") ||
-                   Environment.GetCommandLineArgs().Contains("-mcp");
+                   Environment.GetCommandLineArgs().Contains("-mcp") ||
+                   Environment.GetCommandLineArgs().Contains("mcp");
         }
 
         /// <summary>
         /// 获取当前目录路径
         /// </summary>
         public string DirectoryPath => _directoryPath;
+
+        public bool IsDirectoryExists => !string.IsNullOrEmpty(_directoryPath) && Directory.Exists(_directoryPath);
 
         /// <summary>
         /// 更新目录路径并重新加载文件

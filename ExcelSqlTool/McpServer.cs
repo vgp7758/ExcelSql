@@ -369,6 +369,20 @@ namespace ExcelSqlTool
                 var parsedArguments = ParameterHelper.SmartParseParameters(arguments);
 
                 object result;
+                if(name != "excel_change_directory" && !_excelManager.IsDirectoryExists)
+                {
+                    return new
+                    {
+                        jsonrpc = "2.0",
+                        id,
+                        error = new
+                        {
+                            code = -32000,
+                            message = "Excel文件目录不存在或未设置",
+                            data = "请先使用'excel_change_directory'工具设置有效的Excel文件目录"
+                        }
+                    };
+                }
                 switch (name)
                 {
                     case "excel_show_tables":
