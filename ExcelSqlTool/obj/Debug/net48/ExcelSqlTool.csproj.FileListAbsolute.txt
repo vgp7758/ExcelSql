@@ -20,4 +20,4 @@ D:\Projects\ExcelDB\ExcelSqlTool\obj\Debug\net48\ExcelSqlTool.csproj.CoreCompile
 D:\Projects\ExcelDB\ExcelSqlTool\obj\Debug\net48\ExcelSql.BDFB4F02.Up2Date
 D:\Projects\ExcelDB\ExcelSqlTool\obj\Debug\net48\ExcelSqlTool.exe
 D:\Projects\ExcelDB\ExcelSqlTool\obj\Debug\net48\ExcelSqlTool.pdb
-D:\Projects\ExcelDB\ExcelSqlTool\obj\Debug\net48\ExcelSqlTool.exe.config
+D:\Projects\ExcelDB\ExcelSqlTool\obj\Debug\net48\ExcelSqlTool.sourcelink.json

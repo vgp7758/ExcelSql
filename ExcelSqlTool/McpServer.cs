@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using ExcelSqlTool.Tools;
 
 namespace ExcelSqlTool
 {
@@ -18,12 +19,35 @@ namespace ExcelSqlTool
         private readonly StreamReader _input;
         private readonly StreamWriter _output;
         private bool _isRunning = false;
+        private readonly Dictionary<string, ToolBase> _tools = new Dictionary<string, ToolBase>(StringComparer.OrdinalIgnoreCase);
 
         public McpServer(ExcelManager excelManager, Stream input, Stream output)
         {
             _excelManager = excelManager;
             _input = new StreamReader(input, new UTF8Encoding(false)); // 禁用BOM
             _output = new StreamWriter(output, new UTF8Encoding(false)) { AutoFlush = true }; // 禁用BOM
+
+            // 注册工具
+            RegisterTools();
+        }
+
+        private void RegisterTools()
+        {
+            // 这里集中注册所有工具实例
+            AddTool(new ShowTablesTool(_excelManager));
+            AddTool(new QueryTool(_excelManager));
+            AddTool(new GetTableSchemaTool(_excelManager));
+            AddTool(new RefreshCacheTool(_excelManager));
+            AddTool(new ListSheetsTool(_excelManager));
+            AddTool(new ChangeDirectoryTool(_excelManager));
+            AddTool(new SaveAllTool(_excelManager));
+            AddTool(new SaveFileTool(_excelManager));
+        }
+
+        private void AddTool(ToolBase tool)
+        {
+            if (tool == null || string.IsNullOrEmpty(tool.name)) return;
+            _tools[tool.name] = tool;
         }
 
         /// <summary>
@@ -222,131 +246,17 @@ namespace ExcelSqlTool
         /// <returns>响应对象</returns>
         private Task<object> HandleListToolsAsync(object id)
         {
-            var tools = new object[]
+            var tools = new List<object>();
+            foreach (var kv in _tools)
             {
-                new
-                {
-                    name = "excel_show_tables",
-                    description = "显示Excel中所有可用的表名（这些名称在SQL查询中用作表名）",
-                    inputSchema = new
-                    {
-                        type = "object",
-                        properties = new { },
-                        required = new string[0]
-                    }
-                },
-                new
-                {
-                    name = "excel_query",
-                    description = "执行SQL查询Excel数据，表名应为工作表名称而非文件名",
-                    inputSchema = new
-                    {
-                        type = "object",
-                        properties = new
-                        {
-                            sql = new
-                            {
-                                type = "string",
-                                description = "SQL查询语句，支持SELECT、SHOW TABLES、SHOW CREATE TABLE等。注意：表名应为工作表名称"
-                            }
-                        },
-                        required = new[] { "sql" }
-                    }
-                },
-                new
-                {
-                    name = "excel_get_table_schema",
-                    description = "获取指定表的结构定义，表名应为工作表名称而非文件名",
-                    inputSchema = new
-                    {
-                        type = "object",
-                        properties = new
-                        {
-                            table_name = new
-                            {
-                                type = "string",
-                                description = "表名（应为工作表名称，不是Excel文件名）"
-                            }
-                        },
-                        required = new[] { "table_name" }
-                    }
-                },
-                new
-                {
-                    name = "excel_refresh_cache",
-                    description = "刷新Excel文件缓存，重新加载所有文件",
-                    inputSchema = new
-                    {
-                        type = "object",
-                        properties = new { },
-                        required = new string[0]
-                    }
-                },
-                new
-                {
-                    name = "excel_list_sheets",
-                    description = "列出所有Excel工作表",
-                    inputSchema = new
-                    {
-                        type = "object",
-                        properties = new { },
-                        required = new string[0]
-                    }
-                },
-                new
-                {
-                    name = "excel_change_directory",
-                    description = "更改Excel文件目录，重新加载指定目录中的所有Excel文件",
-                    inputSchema = new
-                    {
-                        type = "object",
-                        properties = new
-                        {
-                            directory = new
-                            {
-                                type = "string",
-                                description = "新的Excel文件目录路径"
-                            }
-                        },
-                        required = new[] { "directory" }
-                    }
-                },
-                new
-                {
-                    name = "excel_save_all",
-                    description = "保存所有修改到Excel文件",
-                    inputSchema = new
-                    {
-                        type = "object",
-                        properties = new { },
-                        required = new string[0]
-                    }
-                },
-                new
-                {
-                    name = "excel_save_file",
-                    description = "保存指定Excel文件的修改",
-                    inputSchema = new
-                    {
-                        type = "object",
-                        properties = new
-                        {
-                            file_name = new
-                            {
-                                type = "string",
-                                description = "Excel文件名（如：data.xlsx）"
-                            }
-                        },
-                        required = new[] { "file_name" }
-                    }
-                }
-            };
+                tools.Add(((ToolBase)kv.Value).Info);
+            }
 
             var response = new
             {
                 jsonrpc = "2.0",
                 id,
-                result = new { tools }
+                result = new { tools = tools.ToArray() }
             };
 
             return Task.FromResult<object>(response);
@@ -368,8 +278,13 @@ namespace ExcelSqlTool
                 // 智能解析参数
                 var parsedArguments = ParameterHelper.SmartParseParameters(arguments);
 
-                object result;
-                if(name != "excel_change_directory" && !_excelManager.IsDirectoryExists)
+                if (string.IsNullOrEmpty(name) || !_tools.ContainsKey(name))
+                {
+                    throw new ArgumentException($"未知工具: {name}");
+                }
+
+                // 只有更换目录工具在目录不存在时可以调用
+                if (!string.Equals(name, "excel_change_directory", StringComparison.OrdinalIgnoreCase) && !_excelManager.IsDirectoryExists)
                 {
                     return new
                     {
@@ -383,55 +298,9 @@ namespace ExcelSqlTool
                         }
                     };
                 }
-                switch (name)
-                {
-                    case "excel_show_tables":
-                        result = await GetTablesAsync();
-                        break;
-                    case "excel_query":
-                        var sql = parsedArguments["sql"]?.ToString();
-                        if (string.IsNullOrEmpty(sql))
-                        {
-                            throw new ArgumentException("SQL查询语句不能为空");
-                        }
-                        result = await ExecuteSqlAsync(sql);
-                        break;
-                    case "excel_get_table_schema":
-                        var tableName = parsedArguments["table_name"]?.ToString();
-                        if (string.IsNullOrEmpty(tableName))
-                        {
-                            throw new ArgumentException("表名不能为空");
-                        }
-                        result = await GetTableSchemaAsync(tableName);
-                        break;
-                    case "excel_refresh_cache":
-                        result = await RefreshCacheAsync();
-                        break;
-                    case "excel_list_sheets":
-                        result = await ListSheetsAsync();
-                        break;
-                    case "excel_change_directory":
-                        var newDirectory = parsedArguments["directory"]?.ToString();
-                        if (string.IsNullOrEmpty(newDirectory))
-                        {
-                            throw new ArgumentException("目录路径不能为空");
-                        }
-                        result = await ChangeDirectoryAsync(newDirectory);
-                        break;
-                    case "excel_save_all":
-                        result = await SaveAllAsync();
-                        break;
-                    case "excel_save_file":
-                        var fileName = parsedArguments["file_name"]?.ToString();
-                        if (string.IsNullOrEmpty(fileName))
-                        {
-                            throw new ArgumentException("文件名不能为空");
-                        }
-                        result = await SaveFileAsync(fileName);
-                        break;
-                    default:
-                        throw new ArgumentException($"未知工具: {name}");
-                }
+
+                var tool = _tools[name];
+                var result = await tool.CallAsync(parsedArguments ?? new JObject());
 
                 var response = new
                 {
@@ -470,11 +339,7 @@ namespace ExcelSqlTool
             }
         }
 
-        /// <summary>
-        /// 执行SQL查询
-        /// </summary>
-        /// <param name="sql">SQL语句</param>
-        /// <returns>查询结果</returns>
+        // 以下保留原有的具体实现方法以兼容旧逻辑（若后续不需要可移除）
         private async Task<object> ExecuteSqlAsync(string sql)
         {
             return await Task.Run(() =>
@@ -536,20 +401,11 @@ namespace ExcelSqlTool
             });
         }
 
-        /// <summary>
-        /// 获取所有表名
-        /// </summary>
-        /// <returns>表名列表</returns>
         private async Task<object> GetTablesAsync()
         {
             return await Task.Run(() => (object)_excelManager.GetTableNames());
         }
 
-        /// <summary>
-        /// 获取表结构
-        /// </summary>
-        /// <param name="tableName">表名</param>
-        /// <returns>表结构</returns>
         private async Task<object> GetTableSchemaAsync(string tableName)
         {
             return await Task.Run(() =>
@@ -571,29 +427,16 @@ namespace ExcelSqlTool
             });
         }
 
-        /// <summary>
-        /// 刷新缓存
-        /// </summary>
-        /// <returns>刷新结果</returns>
         private async Task<object> RefreshCacheAsync()
         {
             return await Task.Run(() => (object)"缓存已刷新");
         }
 
-        /// <summary>
-        /// 列出所有工作表
-        /// </summary>
-        /// <returns>工作表列表</returns>
         private async Task<object> ListSheetsAsync()
         {
             return await Task.Run(() => (object)_excelManager.GetTableNames());
         }
 
-        /// <summary>
-        /// 更改目录
-        /// </summary>
-        /// <param name="newDirectory">新目录路径</param>
-        /// <returns>更改结果</returns>
         private async Task<object> ChangeDirectoryAsync(string newDirectory)
         {
             return await Task.Run(() =>
@@ -610,10 +453,6 @@ namespace ExcelSqlTool
             });
         }
 
-        /// <summary>
-        /// 保存所有修改
-        /// </summary>
-        /// <returns>保存结果</returns>
         private async Task<object> SaveAllAsync()
         {
             return await Task.Run(() =>
@@ -627,11 +466,6 @@ namespace ExcelSqlTool
             });
         }
 
-        /// <summary>
-        /// 保存指定文件
-        /// </summary>
-        /// <param name="fileName">文件名</param>
-        /// <returns>保存结果</returns>
         private async Task<object> SaveFileAsync(string fileName)
         {
             return await Task.Run(() =>
