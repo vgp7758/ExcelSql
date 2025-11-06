@@ -16,8 +16,8 @@ namespace ExcelSqlTool
                 Console.OutputEncoding = new UTF8Encoding(false);
                 Console.InputEncoding = new UTF8Encoding(false);
 
-                var directoryPath = "d:/Projects/Bunker/TableTools/XLSX";
-                bool isMcpMode = true;
+                var directoryPath = "d:/Projects/BunkerProject/TableTools/XLSX";
+                bool isMcpMode = false;
 
                 // 先解析开关，再解析目录，避免把"mcp"当作目录
                 foreach (var a in args)
