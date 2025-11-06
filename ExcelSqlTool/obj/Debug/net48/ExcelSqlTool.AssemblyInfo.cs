@@ -14,7 +14,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("ExcelSqlTool")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+1f218033d576720c2b9184fea607e4eeb9ea2133")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+813339eacfca9552c0ce9b7ff2fd4a8ee36ae72a")]
 [assembly: System.Reflection.AssemblyProductAttribute("ExcelSqlTool")]
 [assembly: System.Reflection.AssemblyTitleAttribute("ExcelSqlTool")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

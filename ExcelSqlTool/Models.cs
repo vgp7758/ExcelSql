@@ -74,5 +74,10 @@ namespace ExcelSqlTool.Models
         /// 列索引
         /// </summary>
         public int Index { get; set; }
+
+        /// <summary>
+        /// 描述（第三行COMMENTS）
+        /// </summary>
+        public string Comments { get; set; }
     }
 }

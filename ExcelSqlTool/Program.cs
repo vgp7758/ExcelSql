@@ -12,114 +12,73 @@ namespace ExcelSqlTool
         {
             try
             {
-                // 设置控制台编码为UTF-8
-                Console.OutputEncoding = Encoding.UTF8;
-                Console.InputEncoding = Encoding.UTF8;
+                // UTF-8 无 BOM，避免向 stdout 输出非协议字符
+                Console.OutputEncoding = new UTF8Encoding(false);
+                Console.InputEncoding = new UTF8Encoding(false);
 
-                // 检查命令行参数
-                if (args.Length == 0)
+                var directoryPath = "d:/Projects/Bunker/TableTools/XLSX";
+                bool isMcpMode = true;
+
+                // 先解析开关，再解析目录，避免把"mcp"当作目录
+                foreach (var a in args)
                 {
-                    Console.WriteLine("用法:");
-                    Console.WriteLine("  ExcelSqlTool.exe <目录路径>           # 传统模式");
-                    Console.WriteLine("  ExcelSqlTool.exe <目录路径> --mcp    # MCP服务器模式");
-                    Console.WriteLine("例如:");
-                    Console.WriteLine("  ExcelSqlTool.exe ./XLSX");
-                    Console.WriteLine("  ExcelSqlTool.exe ./XLSX --mcp");
-                    return;
-                }
-
-                var directoryPath = "";
-                bool isMcpMode = false;
-
-                // 如果没有特殊参数，第一个参数就是目录路径
-                if (args.Length > 0 && !args[0].StartsWith("-"))
-                {
-                    directoryPath = args[0];
-                }
-
-                // 解析其他参数
-                for (int i = 0; i < args.Length; i++)
-                {
-                    var lowerArg = args[i].ToLower();
-                    if (lowerArg == "--mcp" || lowerArg == "-mcp"|| lowerArg == "mcp")
+                    var lower = a.ToLowerInvariant();
+                    if (lower == "--mcp" || lower == "-mcp" || lower == "mcp")
                     {
                         isMcpMode = true;
                         continue;
                     }
-                    if (lowerArg.StartsWith("-dir=") || lowerArg.StartsWith("--dir=")|| lowerArg.StartsWith("dir="))
+                    if (lower.StartsWith("-dir=") || lower.StartsWith("--dir=") || lower.StartsWith("dir="))
                     {
-                        directoryPath = args[i].Substring(lowerArg.IndexOf('=') + 1).Trim('"');
+                        directoryPath = a.Substring(a.IndexOf('=') + 1).Trim('"');
                         continue;
                     }
                 }
+                // 兜底：允许把第一个非开关且不含'='的参数当目录
+                if (string.IsNullOrEmpty(directoryPath))
+                {
+                    foreach (var a in args)
+                    {
+                        var lower = a.ToLowerInvariant();
+                        if (!lower.StartsWith("-") && !lower.Contains("=") && lower != "mcp")
+                        {
+                            directoryPath = a;
+                            break;
+                        }
+                    }
+                }
 
-                // 初始化Excel管理器
                 var excelManager = new ExcelManager(directoryPath);
 
                 if (isMcpMode)
                 {
-                    // MCP服务器模式 - 静默启动，避免输出干扰JSON通信
+                    // MCP服务器模式：仅输出JSON-RPC
                     var mcpServer = new McpServer(excelManager, Console.OpenStandardInput(), Console.OpenStandardOutput());
-                    
-                    // 使用CancellationToken来处理Ctrl+C
                     var cts = new CancellationTokenSource();
-                    Console.CancelKeyPress += (sender, e) =>
-                    {
-                        e.Cancel = true;
-                        cts.Cancel();
-                    };
-
-                    try
-                    {
-                        await mcpServer.StartAsync();
-                    }
-                    catch (OperationCanceledException)
-                    {
-                        // 静默退出
-                    }
+                    Console.CancelKeyPress += (s, e) => { e.Cancel = true; cts.Cancel(); };
+                    try { await mcpServer.StartAsync(); } catch (OperationCanceledException) { }
+                    return;
                 }
-                else
+
+                // 传统模式（调试用）
+                Console.WriteLine("Excel SQL工具已启动，等待MCP请求...");
+                Console.WriteLine("输入 'quit' 或 'exit' 退出程序");
+                var handler = new McpHandler(excelManager);
+                string input;
+                while ((input = Console.ReadLine()) != null)
                 {
-                    // 传统控制台模式
-                    Console.WriteLine("Excel SQL工具已启动，等待MCP请求...");
-                    Console.WriteLine("输入 'quit' 或 'exit' 退出程序");
-
-                    // 初始化MCP处理器
-                    var mcpHandler = new McpHandler(excelManager);
-
-                    // 读取标准输入并处理MCP请求
-                    string input;
-                    while ((input = Console.ReadLine()) != null)
-                    {
-                        if (input.ToLower() == "quit" || input.ToLower() == "exit")
-                        {
-                            break;
-                        }
-
-                        if (!string.IsNullOrWhiteSpace(input))
-                        {
-                            try
-                            {
-                                var response = mcpHandler.HandleRequest(input);
-                                Console.WriteLine(response);
-                            }
-                            catch (Exception ex)
-                            {
-                                Console.WriteLine($"处理请求时发生错误: {ex.Message}");
-                            }
-                        }
-                    }
-
-                    Console.WriteLine("Excel SQL工具已退出");
+                    if (input.Equals("quit", StringComparison.OrdinalIgnoreCase) || input.Equals("exit", StringComparison.OrdinalIgnoreCase))
+                        break;
+                    if (string.IsNullOrWhiteSpace(input)) continue;
+                    try { Console.WriteLine(handler.HandleRequest(input)); }
+                    catch (Exception ex) { Console.WriteLine($"处理请求时发生错误: {ex.Message}"); }
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"程序执行过程中发生错误: {ex.Message}");
-                Console.WriteLine($"详细信息: {ex.StackTrace}");
+                // 避免在stdout写异常
+                try { Console.Error.WriteLine(ex.Message); } catch { }
             }
         }
-    
-    
     }
 }

@@ -129,21 +129,10 @@ namespace ExcelSqlTool
                     Console.WriteLine($"DEBUG: 解析的SQL类型: {statementType}");
                 }
 
-                switch (statementType)
-                {
-                    case SqlParser.SqlStatementType.Select:
-                        return HandleSelect(sql);
-                    case SqlParser.SqlStatementType.Update:
-                        return HandleUpdate(sql);
-                    case SqlParser.SqlStatementType.Delete:
-                        return HandleDelete(sql);
-                    case SqlParser.SqlStatementType.ShowTables:
-                        return HandleShowTables();
-                    case SqlParser.SqlStatementType.ShowCreateTable:
-                        return HandleShowCreateTable(sql);
-                    default:
-                        return CreateErrorResponse($"不支持的SQL语句类型: {statementType}");
-                }
+                // 使用 ExcelManager 的 ExecuteSqlRaw 方法执行 SQL
+                var result = _excelManager.ExecuteSqlRaw(sql);
+
+                return CreateToolSuccessResponse(result);
             }
             catch (Exception ex)
             {

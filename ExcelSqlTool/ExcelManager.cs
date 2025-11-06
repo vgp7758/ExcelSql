@@ -15,14 +15,12 @@ namespace ExcelSqlTool
     {
         private string _directoryPath;
         private readonly Dictionary<string, ExcelFile> _excelFiles;
+        private SqliteManager _sqlite; // 新增：SQLite 运行时数据库
 
         public ExcelManager(string directoryPath)
         {
             // 只在非MCP模式下输出调试信息
-            if (!IsMcpMode())
-            {
-                Console.WriteLine($"DEBUG: ExcelManager初始化，目录路径: {directoryPath}");
-            }
+            WriteDebug("ExcelManager初始化，目录路径: " + directoryPath);
 
             _directoryPath = directoryPath;
             _excelFiles = new Dictionary<string, ExcelFile>();
@@ -32,10 +30,7 @@ namespace ExcelSqlTool
             }
             LoadAllExcelFiles();
 
-            if (!IsMcpMode())
-            {
-                Console.WriteLine($"DEBUG: ExcelManager加载完成，共加载 {_excelFiles.Count} 个Excel文件");
-            }
+            WriteDebug("ExcelManager加载完成");
         }
 
         /// <summary>
@@ -45,9 +40,17 @@ namespace ExcelSqlTool
         private bool IsMcpMode()
         {
             // 检查环境变量或命令行参数来判断是否为MCP模式
-            return Environment.GetCommandLineArgs().Contains("--mcp") ||
-                   Environment.GetCommandLineArgs().Contains("-mcp") ||
-                   Environment.GetCommandLineArgs().Contains("mcp");
+            return Environment.GetCommandLineArgs().Any(a => string.Equals(a, "--mcp", StringComparison.OrdinalIgnoreCase) || 
+                                                             string.Equals(a, "-mcp", StringComparison.OrdinalIgnoreCase) || 
+                                                             string.Equals(a, "mcp", StringComparison.OrdinalIgnoreCase));
+        }
+
+        private void WriteDebug(string message)
+        {
+            if (!IsMcpMode())
+            {
+                Console.WriteLine($"DEBUG: {message}");
+            }
         }
 
         /// <summary>
@@ -83,35 +86,26 @@ namespace ExcelSqlTool
         /// </summary>
         private void LoadAllExcelFiles()
         {
-            if (!IsMcpMode())
-            {
-                Console.WriteLine($"DEBUG: 开始加载Excel文件，目录: {_directoryPath}");
-            }
+            WriteDebug("开始加载Excel文件 " + _directoryPath);
 
             if (!Directory.Exists(_directoryPath))
             {
-                if (!IsMcpMode())
-                {
-                    Console.WriteLine($"DEBUG: 目录不存在: {_directoryPath}");
-                }
+                WriteDebug("目录不存在，跳过加载Excel文件");
                 return;
             }
 
             var excelFiles = Directory.GetFiles(_directoryPath, "*.xlsx");
 
-            if (!IsMcpMode())
-            {
-                Console.WriteLine($"DEBUG: 找到 {excelFiles.Length} 个Excel文件");
-            }
+            WriteDebug($"找到 {excelFiles.Length} 个Excel文件");
 
             foreach (var filePath in excelFiles)
             {
-                if (!IsMcpMode())
-                {
-                    Console.WriteLine($"DEBUG: 正在加载文件: {filePath}");
-                }
+                WriteDebug("加载文件: " + filePath);
                 LoadExcelFile(filePath);
             }
+
+            // Excel载入完成后，构建/重建SQLite运行库
+            BuildOrRebuildSqlite();
         }
 
         /// <summary>
@@ -122,20 +116,14 @@ namespace ExcelSqlTool
         {
             try
             {
-                if (!IsMcpMode())
-                {
-                    Console.WriteLine($"DEBUG: 开始解析Excel文件: {filePath}");
-                }
+                WriteDebug("开始解析Excel文件: " + filePath);
 
                 using (var fileStream = new FileStream(filePath, FileMode.Open, FileAccess.Read))
                 {
                     var workbook = new XSSFWorkbook(fileStream);
                     var fileName = Path.GetFileName(filePath);
 
-                    if (!IsMcpMode())
-                    {
-                        Console.WriteLine($"DEBUG: 文件 {fileName} 包含 {workbook.NumberOfSheets} 个工作表");
-                    }
+                    WriteDebug($"文件 {fileName} 包含 {workbook.NumberOfSheets} 个工作表");
 
                     var excelFile = new ExcelFile
                     {
@@ -148,10 +136,9 @@ namespace ExcelSqlTool
                     for (int i = 0; i < workbook.NumberOfSheets; i++)
                     {
                         var sheet = workbook.GetSheetAt(i);
-                        if (!IsMcpMode())
-                        {
-                            Console.WriteLine($"DEBUG: 正在解析工作表 {i+1}: {sheet.SheetName}");
-                        }
+                        WriteDebug($"解析工作表: {sheet.SheetName}");
+
+                        if (sheet.SheetName == "Struct") continue; // 跳过Struct表
 
                         var worksheet = new Worksheet
                         {
@@ -162,10 +149,7 @@ namespace ExcelSqlTool
                         // 解析表头和数据
                         ParseSheet(sheet, worksheet);
 
-                        if (!IsMcpMode())
-                        {
-                            Console.WriteLine($"DEBUG: 工作表 {sheet.SheetName} 解析完成，包含 {worksheet.DataRows.Count} 行数据");
-                        }
+                        WriteDebug($"工作表 {sheet.SheetName} 解析完成，包含 {worksheet.DataRows.Count} 行数据");
                         excelFile.Worksheets[sheet.SheetName] = worksheet;
                     }
 
@@ -179,39 +163,58 @@ namespace ExcelSqlTool
         }
 
         /// <summary>
+        /// 构建或重建SQLite运行数据库
+        /// </summary>
+        private void BuildOrRebuildSqlite()
+        {
+            try
+            {
+                _sqlite?.Dispose();
+                // 可将DB放在临时目录，每次重建，简单稳妥
+                _sqlite = new SqliteManager();
+                _sqlite.RebuildFromExcel(_excelFiles);
+            }
+            catch (Exception ex)
+            {
+                // MCP模式下禁止写stdout
+                try { Console.Error.WriteLine($"WARN: 构建SQLite数据库失败，将暂不启用SQLite: {ex.Message} {ex.StackTrace}"); } catch { }
+                _sqlite = null;
+            }
+        }
+
+        /// <summary>
         /// 解析工作表
         /// </summary>
         /// <param name="sheet">工作表</param>
         /// <param name="worksheet">工作表模型</param>
         private void ParseSheet(ISheet sheet, Worksheet worksheet)
         {
-            if (!IsMcpMode())
-            {
-                Console.WriteLine($"DEBUG: 开始解析工作表 {sheet.SheetName}，总行数: {sheet.LastRowNum + 1}");
-            }
+            WriteDebug($"开始解析工作表 {sheet.SheetName}，总行数: {sheet.LastRowNum + 1}");
 
             if (sheet.LastRowNum < 3)
             {
-                if (!IsMcpMode())
-                {
-                    Console.WriteLine($"DEBUG: 工作表 {sheet.SheetName} 行数不足，跳过");
-                }
+                WriteDebug($"工作表 {sheet.SheetName} 行数不足，跳过");
                 // 空表或数据不足
                 return;
             }
 
             // 智能判断字段名称位置（第一行还是第二行）
             int headerRowIndex = DetermineHeaderRowIndex(sheet);
+            int typeRowIndex = 0;
+            if (headerRowIndex == 0) typeRowIndex = 1;
             int dataStartRowIndex = FindDataStartRow(sheet);
 
-            if (!IsMcpMode())
-            {
-                Console.WriteLine($"DEBUG: 工作表 {sheet.SheetName} - 字段名行: {headerRowIndex}, 数据开始行: {dataStartRowIndex}");
-            } 
+            WriteDebug($"工作表 {sheet.SheetName} - 字段名行: {headerRowIndex}, 数据开始行: {dataStartRowIndex}");
 
             // 解析表头
             var headerRow = sheet.GetRow(headerRowIndex);
             if (headerRow == null) return;
+
+            var typeRow = sheet.GetRow(typeRowIndex);
+            if (typeRow == null) return;
+
+            // 第三行（描述/COMMENTS）按惯例为 headerRowIndex + 2
+            var commentsRow = sheet.GetRow(headerRowIndex + 2);
 
             // 创建列定义
             for (int i = 0; i < headerRow.LastCellNum; i++)
@@ -222,11 +225,23 @@ namespace ExcelSqlTool
                     var columnName = cell.ToString();
                     if (!string.IsNullOrEmpty(columnName))
                     {
+                        string comments = null;
+                        if (commentsRow != null)
+                        {
+                            var ccell = commentsRow.GetCell(i);
+                            if (ccell != null)
+                            {
+                                var cval = GetCellValue(ccell);
+                                comments = cval?.ToString();
+                            }
+                        }
+
                         var column = new Column
                         {
                             Name = columnName,
                             Index = i,
-                            DataType = InferColumnType(sheet, i, dataStartRowIndex) // 推断数据类型
+                            DataType = typeRow.GetCell(i).ToString(), // 推断数据类型
+                            Comments = comments
                         };
                         worksheet.Headers.Add(column);
                     }
@@ -434,11 +449,45 @@ namespace ExcelSqlTool
         }
 
         /// <summary>
+        /// 直接在SQLite上执行原始SQL（SELECT返回结果集，非查询返回影响行数）
+        /// </summary>
+        public object ExecuteSqlRaw(string sql)
+        {
+            if (string.IsNullOrWhiteSpace(sql)) throw new ArgumentException("SQL不能为空");
+            var upper = sql.TrimStart().ToUpperInvariant();
+            if (upper.StartsWith("SELECT"))
+            {
+                return _sqlite.ExecuteQuery(sql);
+            }
+            else if (upper.StartsWith("SHOW TABLES"))
+            {
+                return _sqlite.GetTables();
+            }
+            else if (upper.StartsWith("SHOW CREATE TABLE"))
+            {
+                var table = SqlParser.ParseShowCreateTable(sql);
+                var stmt = _sqlite.GetCreateTable(table);
+                return new Dictionary<string, string> { { "table", table }, { "createTable", stmt } };
+            }
+            else
+            {
+                var affected = _sqlite.ExecuteNonQuery(sql);
+                return new Dictionary<string, object> { { "affectedRows", affected } };
+            }
+        }
+
+        /// <summary>
         /// 获取所有表名
         /// </summary>
         /// <returns>表名列表</returns>
         public List<string> GetTableNames()
         {
+            // 优先返回SQLite中的表名；若尚未构建，回退旧缓存
+            try
+            {
+                if (_sqlite != null) return _sqlite.GetTables();
+            }
+            catch { }
             var tableNames = new List<string>();
             foreach (var excelFile in _excelFiles.Values)
             {
@@ -460,13 +509,17 @@ namespace ExcelSqlTool
         /// <returns>建表语句</returns>
         public string GetCreateTableStatement(string tableName)
         {
+            if (_sqlite != null)
+            {
+                try { return _sqlite.GetCreateTable(tableName); } catch { }
+            }
+            // fallback to old
             foreach (var excelFile in _excelFiles.Values)
             {
                 if (excelFile.Worksheets.ContainsKey(tableName))
                 {
                     var worksheet = excelFile.Worksheets[tableName];
                     var sql = $"CREATE TABLE {tableName} (\n";
-                    
                     for (int i = 0; i < worksheet.Headers.Count; i++)
                     {
                         var column = worksheet.Headers[i];
@@ -475,12 +528,10 @@ namespace ExcelSqlTool
                             sql += ",";
                         sql += "\n";
                     }
-                    
                     sql += ");";
                     return sql;
                 }
             }
-            
             // 增强错误提示，提供更友好的指导
             var availableTables = GetTableNames();
             var errorMessage = $"表 '{tableName}' 不存在。\n";
@@ -490,7 +541,6 @@ namespace ExcelSqlTool
             {
                 errorMessage += $"  - {table}\n";
             }
-            
             throw new Exception(errorMessage);
         }
 
@@ -979,7 +1029,7 @@ namespace ExcelSqlTool
         }
 
         /// <summary>
-        /// 刷新文件缓存
+        /// 刷新文件缓存（重建SQLite）
         /// </summary>
         public void Refresh()
         {
@@ -1100,67 +1150,24 @@ namespace ExcelSqlTool
         /// <returns>更新的行数</returns>
         public int ExecuteUpdate(string fileNameOrTableName, Dictionary<string, string> setValues, string whereClause = null)
         {
-            var totalUpdatedRows = 0;
-
-            // 首先尝试按Excel文件名更新
-            var excelFileName = fileNameOrTableName.EndsWith(".xlsx") ? fileNameOrTableName : fileNameOrTableName + ".xlsx";
-
-            if (_excelFiles.ContainsKey(excelFileName))
+            if (_sqlite == null) throw new Exception("SQLite尚未初始化");
+            // 构造UPDATE语句（简单版）
+            var sb = new System.Text.StringBuilder();
+            sb.Append("UPDATE ").Append('"').Append(fileNameOrTableName).Append('"').Append(" SET ");
+            bool first = true;
+            foreach (var kv in setValues)
             {
-                var excelFile = _excelFiles[excelFileName];
-
-                // 遍历该Excel文件的所有工作表
-                foreach (var worksheet in excelFile.Worksheets.Values)
-                {
-                    var updatedRows = ExecuteUpdateInWorksheet(worksheet, setValues, whereClause);
-                    totalUpdatedRows += updatedRows;
-                }
-
-                return totalUpdatedRows;
+                if (!first) sb.Append(", ");
+                first = false;
+                sb.Append('"').Append(kv.Key).Append('"').Append(" = ");
+                sb.Append('"').Append(kv.Value.Replace("\"", "\"\"")).Append('"');
             }
-
-            // 如果找不到Excel文件，尝试按工作表名更新
-            foreach (var excelFile in _excelFiles.Values)
+            if (!string.IsNullOrWhiteSpace(whereClause))
             {
-                if (excelFile.Worksheets.ContainsKey(fileNameOrTableName))
-                {
-                    var worksheet = excelFile.Worksheets[fileNameOrTableName];
-                    return ExecuteUpdateInWorksheet(worksheet, setValues, whereClause);
-                }
+                sb.Append(" WHERE ").Append(whereClause);
             }
-
-            throw new Exception($"找不到 '{fileNameOrTableName}' 对应的Excel文件或工作表。");
-        }
-
-        /// <summary>
-        /// 在单个工作表中执行UPDATE
-        /// </summary>
-        /// <param name="worksheet">工作表</param>
-        /// <param name="setValues">要更新的字段和值</param>
-        /// <param name="whereClause">WHERE条件</param>
-        /// <returns>更新的行数</returns>
-        private int ExecuteUpdateInWorksheet(Worksheet worksheet, Dictionary<string, string> setValues, string whereClause)
-        {
-            var updatedRows = 0;
-            var filteredRows = ApplyWhereClause(worksheet.DataRows, whereClause);
-
-            foreach (var row in filteredRows)
-            {
-                foreach (var setValue in setValues)
-                {
-                    var columnName = setValue.Key;
-                    var newValue = setValue.Value;
-
-                    if (row.ContainsKey(columnName))
-                    {
-                        // 尝试转换数据类型
-                        row[columnName] = ConvertValueToExpectedType(newValue, worksheet, columnName);
-                    }
-                }
-                updatedRows++;
-            }
-
-            return updatedRows;
+            var res = _sqlite.ExecuteNonQuery(sb.ToString());
+            return res;
         }
 
         /// <summary>
@@ -1171,293 +1178,124 @@ namespace ExcelSqlTool
         /// <returns>删除的行数</returns>
         public int ExecuteDelete(string fileNameOrTableName, string whereClause = null)
         {
-            var totalDeletedRows = 0;
-
-            // 首先尝试按Excel文件名删除
-            var excelFileName = fileNameOrTableName.EndsWith(".xlsx") ? fileNameOrTableName : fileNameOrTableName + ".xlsx";
-
-            if (_excelFiles.ContainsKey(excelFileName))
+            if (_sqlite == null) throw new Exception("SQLite尚未初始化");
+            var sql = new System.Text.StringBuilder();
+            sql.Append("DELETE FROM ").Append('"').Append(fileNameOrTableName).Append('"');
+            if (!string.IsNullOrWhiteSpace(whereClause))
             {
-                var excelFile = _excelFiles[excelFileName];
-
-                // 遍历该Excel文件的所有工作表
-                foreach (var worksheet in excelFile.Worksheets.Values)
-                {
-                    var deletedRows = ExecuteDeleteInWorksheet(worksheet, whereClause);
-                    totalDeletedRows += deletedRows;
-                }
-
-                return totalDeletedRows;
+                sql.Append(" WHERE ").Append(whereClause);
             }
-
-            // 如果找不到Excel文件，尝试按工作表名删除
-            foreach (var excelFile in _excelFiles.Values)
-            {
-                if (excelFile.Worksheets.ContainsKey(fileNameOrTableName))
-                {
-                    var worksheet = excelFile.Worksheets[fileNameOrTableName];
-                    return ExecuteDeleteInWorksheet(worksheet, whereClause);
-                }
-            }
-
-            throw new Exception($"找不到 '{fileNameOrTableName}' 对应的Excel文件或工作表。");
+            return _sqlite.ExecuteNonQuery(sql.ToString());
         }
 
         /// <summary>
-        /// 在单个工作表中执行DELETE
+        /// 保存所有修改回Excel：从SQLite导出
         /// </summary>
-        /// <param name="worksheet">工作表</param>
-        /// <param name="whereClause">WHERE条件</param>
-        /// <returns>删除的行数</returns>
-        private int ExecuteDeleteInWorksheet(Worksheet worksheet, string whereClause)
-        {
-            var filteredRows = ApplyWhereClause(worksheet.DataRows, whereClause);
-            var deletedRows = filteredRows.Count;
-
-            // 从数据行中删除匹配的行
-            foreach (var row in filteredRows)
-            {
-                worksheet.DataRows.Remove(row);
-            }
-
-            return deletedRows;
-        }
-
-        /// <summary>
-        /// 将值转换为期望的数据类型
-        /// </summary>
-        /// <param name="value">字符串值</param>
-        /// <param name="worksheet">工作表</param>
-        /// <param name="columnName">列名</param>
-        /// <returns>转换后的值</returns>
-        private object ConvertValueToExpectedType(string value, Worksheet worksheet, string columnName)
-        {
-            var column = worksheet.Headers.FirstOrDefault(h => h.Name == columnName);
-            if (column == null)
-                return value;
-
-            switch (column.DataType.ToUpper())
-            {
-                case "INT":
-                    if (int.TryParse(value, out int intValue))
-                        return intValue;
-                    break;
-                case "DOUBLE":
-                    if (double.TryParse(value, out double doubleValue))
-                        return doubleValue;
-                    break;
-                case "DATE":
-                    if (DateTime.TryParse(value, out DateTime dateValue))
-                        return dateValue;
-                    break;
-                case "BOOLEAN":
-                    if (bool.TryParse(value, out bool boolValue))
-                        return boolValue;
-                    if (value.ToLower() == "1" || value.ToLower() == "true")
-                        return true;
-                    if (value.ToLower() == "0" || value.ToLower() == "false")
-                        return false;
-                    break;
-            }
-
-            return value; // 默认返回字符串
-        }
-
-        /// <summary>
-        /// 保存所有修改到Excel文件
-        /// </summary>
-        /// <returns>保存的文件数量</returns>
         public int SaveAllChanges()
         {
             var savedFiles = 0;
-
             foreach (var excelFile in _excelFiles.Values)
             {
-                if (SaveExcelFile(excelFile))
-                {
-                    savedFiles++;
-                }
+                if (ExportExcelFileFromSqlite(excelFile)) savedFiles++;
             }
-
             return savedFiles;
         }
 
-        /// <summary>
-        /// 保存指定Excel文件的修改
-        /// </summary>
-        /// <param name="fileName">Excel文件名</param>
-        /// <returns>是否保存成功</returns>
         public bool SaveChanges(string fileName)
         {
             var excelFileName = fileName.EndsWith(".xlsx") ? fileName : fileName + ".xlsx";
-
             if (_excelFiles.ContainsKey(excelFileName))
             {
                 var excelFile = _excelFiles[excelFileName];
-                return SaveExcelFile(excelFile);
+                return ExportExcelFileFromSqlite(excelFile);
             }
-
             return false;
         }
 
-        /// <summary>
-        /// 保存单个Excel文件到磁盘
-        /// </summary>
-        /// <param name="excelFile">Excel文件对象</param>
-        /// <returns>是否保存成功</returns>
-        private bool SaveExcelFile(ExcelFile excelFile)
+        private bool ExportExcelFileFromSqlite(ExcelFile excelFile)
         {
             try
             {
-                // 使用临时文件模式避免数据丢失
                 var tempFilePath = Path.GetTempFileName();
                 File.Move(tempFilePath, tempFilePath + ".xlsx");
                 tempFilePath += ".xlsx";
 
-                // 创建新的工作簿
-                using (var fileStream = new FileStream(tempFilePath, FileMode.Create))
+                XSSFWorkbook workbook = null;
+                // 优先以原文件为基础，保留头部样式/列宽/合并等
+                if (File.Exists(excelFile.Path))
                 {
-                    var workbook = new XSSFWorkbook();
-
-                    // 遍历所有工作表
-                    foreach (var worksheet in excelFile.Worksheets.Values)
+                    using (var srcStream = new FileStream(excelFile.Path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
                     {
-                        var sheet = workbook.CreateSheet(worksheet.Name);
-
-                        // 写入表头（3行：列名、数据类型、描述）
-                        WriteHeaders(sheet, worksheet);
-
-                        // 写入数据行
-                        WriteDataRows(sheet, worksheet);
+                        workbook = new XSSFWorkbook(srcStream);
                     }
-
-                    // 写入文件
-                    workbook.Write(fileStream);
+                }
+                else
+                {
+                    workbook = new XSSFWorkbook();
                 }
 
-                // 备份原文件
+                foreach (var worksheet in excelFile.Worksheets.Values)
+                {
+                    var sheet = workbook.GetSheet(worksheet.Name) ?? workbook.CreateSheet(worksheet.Name);
+
+                    // 如果工作表存在，尽量保留前3行头部（样式/合并/列宽等保持不变）
+                    // 确保存在3行头部，不存在则补齐（补齐的样式无法还原，仅写入文本）
+                    for (int i = 0; i < 3; i++)
+                    {
+                        var row = sheet.GetRow(i) ?? sheet.CreateRow(i);
+                        if (row.Cells.Count == 0)
+                        {
+                            // 当头部不存在时，按当前模型写入文本（样式不可还原）
+                            for (int c = 0; c < worksheet.Headers.Count; c++)
+                            {
+                                var cell = row.GetCell(c) ?? row.CreateCell(c);
+                                if (i == 0) cell.SetCellValue(worksheet.Headers[c].Name);
+                                else if (i == 1) cell.SetCellValue(worksheet.Headers[c].DataType);
+                                else cell.SetCellValue("");
+                            }
+                        }
+                    }
+
+                    // 清除旧数据行（保留0..2行）
+                    for (int r = sheet.LastRowNum; r >= 3; r--)
+                    {
+                        var oldRow = sheet.GetRow(r);
+                        if (oldRow != null)
+                        {
+                            sheet.RemoveRow(oldRow);
+                        }
+                    }
+
+                    // 从SQLite读取该表最新数据
+                    var rows = _sqlite.ExecuteQuery($"SELECT * FROM \"{worksheet.Name}\"");
+                    worksheet.DataRows = rows;
+
+                    // 写入数据行（从第4行开始）
+                    WriteDataRows(sheet, worksheet);
+                }
+
+                // 写出到临时文件
+                using (var outStream = new FileStream(tempFilePath, FileMode.Create, FileAccess.Write))
+                {
+                    workbook.Write(outStream);
+                }
+
+                // 备份原文件并替换
                 var backupFilePath = excelFile.Path + ".backup";
                 if (File.Exists(excelFile.Path))
                 {
-                    if (File.Exists(backupFilePath))
-                    {
-                        File.Delete(backupFilePath);
-                    }
+                    if (File.Exists(backupFilePath)) File.Delete(backupFilePath);
                     File.Copy(excelFile.Path, backupFilePath);
                 }
-
-                // 替换原文件
-                File.Delete(excelFile.Path);
+                if (File.Exists(excelFile.Path)) File.Delete(excelFile.Path);
                 File.Move(tempFilePath, excelFile.Path);
-
-                // 更新修改时间
                 excelFile.LastModified = File.GetLastWriteTime(excelFile.Path);
-
                 return true;
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"保存Excel文件失败: {excelFile.Path}, 错误: {ex.Message}");
                 return false;
-            }
-        }
-
-        /// <summary>
-        /// 写入工作表头信息
-        /// </summary>
-        /// <param name="sheet">NPOI工作表</param>
-        /// <param name="worksheet">工作表对象</param>
-        private void WriteHeaders(ISheet sheet, Worksheet worksheet)
-        {
-            // 第一行：列名
-            var headerRow = sheet.CreateRow(0);
-            for (int i = 0; i < worksheet.Headers.Count; i++)
-            {
-                var cell = headerRow.CreateCell(i);
-                cell.SetCellValue(worksheet.Headers[i].Name);
-            }
-
-            // 第二行：数据类型
-            var typeRow = sheet.CreateRow(1);
-            for (int i = 0; i < worksheet.Headers.Count; i++)
-            {
-                var cell = typeRow.CreateCell(i);
-                cell.SetCellValue(worksheet.Headers[i].DataType);
-            }
-
-            // 第三行：描述（留空或使用默认描述）
-            var descRow = sheet.CreateRow(2);
-            for (int i = 0; i < worksheet.Headers.Count; i++)
-            {
-                var cell = descRow.CreateCell(i);
-                cell.SetCellValue(""); // 暂时留空，因为Column模型没有Description属性
-            }
-        }
-
-        /// <summary>
-        /// 写入数据行
-        /// </summary>
-        /// <param name="sheet">NPOI工作表</param>
-        /// <param name="worksheet">工作表对象</param>
-        private void WriteDataRows(ISheet sheet, Worksheet worksheet)
-        {
-            for (int rowIndex = 0; rowIndex < worksheet.DataRows.Count; rowIndex++)
-            {
-                var dataRow = worksheet.DataRows[rowIndex];
-                var sheetRow = sheet.CreateRow(rowIndex + 3); // 从第4行开始（前3行是表头）
-
-                for (int colIndex = 0; colIndex < worksheet.Headers.Count; colIndex++)
-                {
-                    var columnName = worksheet.Headers[colIndex].Name;
-                    var cell = sheetRow.CreateCell(colIndex);
-
-                    if (dataRow.ContainsKey(columnName))
-                    {
-                        var value = dataRow[columnName];
-                        SetCellValue(cell, value);
-                    }
-                    else
-                    {
-                        cell.SetCellValue("");
-                    }
-                }
-            }
-        }
-
-        /// <summary>
-        /// 设置单元格值
-        /// </summary>
-        /// <param name="cell">单元格</param>
-        /// <param name="value">值</param>
-        private void SetCellValue(ICell cell, object value)
-        {
-            if (value == null || value == DBNull.Value)
-            {
-                cell.SetCellValue("");
-            }
-            else if (value is string)
-            {
-                cell.SetCellValue((string)value);
-            }
-            else if (value is int)
-            {
-                cell.SetCellValue((int)value);
-            }
-            else if (value is double)
-            {
-                cell.SetCellValue((double)value);
-            }
-            else if (value is bool)
-            {
-                cell.SetCellValue((bool)value);
-            }
-            else if (value is DateTime)
-            {
-                cell.SetCellValue((DateTime)value);
-            }
-            else
-            {
-                cell.SetCellValue(value.ToString());
             }
         }
 
@@ -1483,6 +1321,99 @@ namespace ExcelSqlTool
         public void UndoChanges()
         {
             Refresh();
+        }
+
+        private void WriteHeaders(ISheet sheet, Worksheet worksheet)
+        {
+            // 第一行：列名
+            var headerRow = sheet.GetRow(0) ?? sheet.CreateRow(0);
+            for (int i = 0; i < worksheet.Headers.Count; i++)
+            {
+                var cell = headerRow.GetCell(i) ?? headerRow.CreateCell(i);
+                cell.SetCellValue(worksheet.Headers[i].Name);
+            }
+
+            // 第二行：数据类型
+            var typeRow = sheet.GetRow(1) ?? sheet.CreateRow(1);
+            for (int i = 0; i < worksheet.Headers.Count; i++)
+            {
+                var cell = typeRow.GetCell(i) ?? typeRow.CreateCell(i);
+                cell.SetCellValue(worksheet.Headers[i].DataType);
+            }
+
+            // 第三行：描述（COMMENTS）
+            var descRow = sheet.GetRow(2) ?? sheet.CreateRow(2);
+            for (int i = 0; i < worksheet.Headers.Count; i++)
+            {
+                var cell = descRow.GetCell(i) ?? descRow.CreateCell(i);
+                var comments = worksheet.Headers[i].Comments;
+                cell.SetCellValue(string.IsNullOrEmpty(comments) ? "" : comments);
+            }
+        }
+
+        private void WriteDataRows(ISheet sheet, Worksheet worksheet)
+        {
+            for (int rowIndex = 0; rowIndex < worksheet.DataRows.Count; rowIndex++)
+            {
+                var dataRow = worksheet.DataRows[rowIndex];
+                var sheetRow = sheet.CreateRow(rowIndex + 3); // 从第4行开始（前3行是表头）
+
+                for (int colIndex = 0; colIndex < worksheet.Headers.Count; colIndex++)
+                {
+                    var columnName = worksheet.Headers[colIndex].Name;
+                    var cell = sheetRow.CreateCell(colIndex);
+
+                    if (dataRow.ContainsKey(columnName))
+                    {
+                        var value = dataRow[columnName];
+                        SetCellValue(cell, value);
+                    }
+                    else
+                    {
+                        cell.SetCellValue("");
+                    }
+                }
+            }
+        }
+
+        private void SetCellValue(ICell cell, object value)
+        {
+            if (value == null || value == DBNull.Value)
+            {
+                cell.SetCellValue("");
+            }
+            else if (value is string)
+            {
+                cell.SetCellValue((string)value);
+            }
+            else if (value is int)
+            {
+                cell.SetCellValue((int)value);
+            }
+            else if (value is long)
+            {
+                cell.SetCellValue(Convert.ToDouble(value));
+            }
+            else if (value is double)
+            {
+                cell.SetCellValue((double)value);
+            }
+            else if (value is float)
+            {
+                cell.SetCellValue(Convert.ToDouble(value));
+            }
+            else if (value is bool)
+            {
+                cell.SetCellValue((bool)value);
+            }
+            else if (value is DateTime)
+            {
+                cell.SetCellValue((DateTime)value);
+            }
+            else
+            {
+                cell.SetCellValue(value.ToString());
+            }
         }
     }
 }
