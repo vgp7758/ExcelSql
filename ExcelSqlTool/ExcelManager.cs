@@ -177,7 +177,7 @@ namespace ExcelSqlTool
             catch (Exception ex)
             {
                 // MCP模式下禁止写stdout
-                try { Console.Error.WriteLine($"WARN: 构建SQLite数据库失败，将暂不启用SQLite: {ex.Message} {ex.StackTrace}"); } catch { }
+                try { Console.Error.WriteLine($"WARN: 构建SQLite数据库失败，将暂不启用SQLite: {ex.Message}"); } catch { }
                 _sqlite = null;
             }
         }
@@ -1414,6 +1414,25 @@ namespace ExcelSqlTool
             {
                 cell.SetCellValue(value.ToString());
             }
+        }
+
+        /// <summary>
+        /// 返回已加载Excel文件及其工作表信息
+        /// </summary>
+        public List<Dictionary<string, object>> GetLoadedFilesInfo()
+        {
+            var list = new List<Dictionary<string, object>>();
+            foreach (var kv in _excelFiles)
+            {
+                var file = kv.Value;
+                var info = new Dictionary<string, object>();
+                info["file"] = file.FileName;
+                info["path"] = file.Path;
+                info["last_modified"] = file.LastModified;
+                info["sheets"] = file.Worksheets.Keys.ToList();
+                list.Add(info);
+            }
+            return list;
         }
     }
 }

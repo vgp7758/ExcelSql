@@ -34,10 +34,15 @@ namespace ExcelSqlTool
         private void RegisterTools()
         {
             AddTool(new ShowTablesTool(_excelManager));
+            AddTool(new ListSheetsTool(_excelManager)); // 与show_tables功能重复，但更直观
+            AddTool(new ListFilesTool(_excelManager));
+            AddTool(new GetDirectoryTool(_excelManager));
+            AddTool(new GetStatsTool(_excelManager));
+            AddTool(new UndoChangesTool(_excelManager));
+
             AddTool(new QueryTool(_excelManager));
             AddTool(new GetTableSchemaTool(_excelManager));
             AddTool(new RefreshCacheTool(_excelManager));
-            AddTool(new ListSheetsTool(_excelManager));
             AddTool(new ChangeDirectoryTool(_excelManager));
             AddTool(new SaveAllTool(_excelManager));
             AddTool(new SaveFileTool(_excelManager));
