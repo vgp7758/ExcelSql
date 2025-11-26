@@ -1,8 +1,10 @@
+using ExcelSqlTool.Tools;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using Newtonsoft.Json;
-using Newtonsoft.Json.Linq;
+using System.Threading.Tasks;
 
 namespace ExcelSqlTool
 {
@@ -53,10 +55,66 @@ namespace ExcelSqlTool
     public class McpHandler
     {
         private readonly ExcelManager _excelManager;
+        private readonly Dictionary<string, ToolBase> _tools = new Dictionary<string, ToolBase>(StringComparer.OrdinalIgnoreCase);
 
         public McpHandler(ExcelManager excelManager)
         {
             _excelManager = excelManager;
+            RegisterTools();
+        }
+
+        private void RegisterTools()
+        {
+            //AddTool(new ShowTablesTool(_excelManager));
+            //AddTool(new ListSheetsTool(_excelManager)); // 与show_tables功能重复，但更直观
+            //AddTool(new ListFilesTool(_excelManager));
+            //AddTool(new GetDirectoryTool(_excelManager));
+            //AddTool(new GetStatsTool(_excelManager));
+            //AddTool(new UndoChangesTool(_excelManager));
+
+            //AddTool(new QueryTool(_excelManager));
+            //AddTool(new GetTableSchemaTool(_excelManager));
+            //AddTool(new RefreshCacheTool(_excelManager));
+            //AddTool(new ChangeDirectoryTool(_excelManager));
+            //AddTool(new SaveAllTool(_excelManager));
+            //AddTool(new SaveFileTool(_excelManager));
+
+            System.Reflection.Assembly assembly = System.Reflection.Assembly.GetExecutingAssembly();
+            var toolTypes = assembly.GetTypes().Where(t => t.IsSubclassOf(typeof(ToolBase)) && !t.IsAbstract);
+            foreach (var type in toolTypes)
+            {
+                var toolInstance = (ToolBase)Activator.CreateInstance(type, _excelManager);
+                AddTool(toolInstance);
+            }
+        }
+
+        private void AddTool(ToolBase tool)
+        {
+            if (tool == null || string.IsNullOrEmpty(tool.name)) return;
+            _tools[tool.name] = tool;
+        }
+
+        public async Task<object> HandleCallToolAsync(JObject request, object id)
+        {
+            var name = request["params"]?["name"]?.ToString();
+            var arguments = request["params"]?["arguments"] as JObject;
+            try
+            {
+                var parsedArguments = ParameterHelper.SmartParseParameters(arguments);
+                if (string.IsNullOrEmpty(name) || !_tools.ContainsKey(name))
+                    throw new ArgumentException($"未知工具: {name}");
+                if (!string.Equals(name, "excel_change_directory", StringComparison.OrdinalIgnoreCase) && !_excelManager.IsDirectoryExists)
+                {
+                    return new { jsonrpc = "2.0", id, error = new { code = -32000, message = "Excel文件目录不存在或未设置", data = "请先使用'excel_change_directory'工具设置有效的Excel文件目录" } };
+                }
+                var tool = _tools[name];
+                var result = await tool.CallAsync(parsedArguments ?? new JObject());
+                return new { jsonrpc = "2.0", id, result = new { content = new[] { new { type = "text", text = JsonConvert.SerializeObject(result, Formatting.Indented) } } } };
+            }
+            catch (Exception ex)
+            {
+                return new { jsonrpc = "2.0", id, error = new { code = -32603, message = "Internal error", data = ex.Message } };
+            }
         }
 
         /// <summary>
@@ -70,8 +128,8 @@ namespace ExcelSqlTool
             {
                 Console.WriteLine($"收到请求: {requestJson}");
                 var request = JObject.Parse(requestJson);
-                var method = request["method"]?.ToString();
-                var parameters = request["params"] as JObject;
+                var method = request["name"]?.ToString();
+                var parameters = request["arguments"] as JObject;
 
                 // 智能解析参数
                 var parsedParameters = ParameterHelper.SmartParseParameters(parameters);

@@ -28,7 +28,7 @@ namespace ExcelSqlTool
                         isMcpMode = true;
                         continue;
                     }
-                    if (lower.StartsWith("-dir=") || lower.StartsWith("--dir=") || lower.StartsWith("dir="))
+                    if (lower.StartsWith("-dir=") || lower.StartsWith("--dir=") || lower.StartsWith("dir=")||lower.StartsWith("--cwd"))
                     {
                         directoryPath = a.Substring(a.IndexOf('=') + 1).Trim('"');
                         continue;

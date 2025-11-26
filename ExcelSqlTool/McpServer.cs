@@ -76,6 +76,15 @@ namespace ExcelSqlTool
                             await Task.Delay(50);
                             continue;
                         }
+                        if(requestLine == "quit" || requestLine == "exit" || requestLine == "shutdown")
+                        {
+                            requestLine = JsonConvert.SerializeObject(new
+                            {
+                                jsonrpc = "2.0",
+                                method = requestLine,
+                                id = Guid.NewGuid().ToString()
+                            });
+                        }
                         requestLine = RemoveBOM(requestLine);
                         var request = JObject.Parse(requestLine);
                         var response = await ProcessRequestAsync(request);
