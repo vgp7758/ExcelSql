@@ -125,7 +125,7 @@ namespace ExcelSqlTool
                     case "initialize":
                         return await HandleInitializeAsync(request, id);
                     case "initialized":
-                        return new { jsonrpc = "2.0", id, result = (object)null };
+                        return new { jsonrpc = "2.0", id, result = new { ok = true } };
                     case "exit":
                     case "quit":
                     case "shutdown":
@@ -161,7 +161,7 @@ namespace ExcelSqlTool
                 {
                     protocolVersion = "2024-11-05",
                     capabilities = new { tools = new { listChanged = false } },
-                    serverInfo = new { name = "excel-sql-tool", version = "1.0.0" }
+                    serverInfo = new { name = "excel-sql", version = "1.0.0" }
                 }
             };
             return Task.FromResult<object>(response);
